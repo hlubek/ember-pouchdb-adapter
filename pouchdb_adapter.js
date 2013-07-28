@@ -125,8 +125,16 @@
      */
     deleteRecord: function(store, type, record) {
       var self = this;
-      this.attemptDbTransaction(store, record, function(dbStore) {
-        return dbStore['delete'](self.dbId(record));
+
+      this._getDb().remove({
+        _id: get(record, 'id'),
+        _rev: get(record, '_rev')
+      }, function(err, response) {
+        if (err) {
+          console.error(err);
+        } else {
+          self.didDeleteRecord(store, type, record);
+        }
       });
     },
 
@@ -198,55 +206,54 @@
       });
     },
 
-    /**
-     Using a cursor that loops through *all* results, comparing each one against the query.
-     TODO: For performance reasons we should use indexes on query attributes.
-     (https://developer.mozilla.org/en-US/docs/IndexedDB/Using_IndexedDB#Using_an_index)
-
-     @param {DS.Store} store
-     @param {Class} type
-     @param {Object} query
-     @param {Array} array
-     */
     findQuery: function(store, type, query, array) {
-      var match = function(hash, query) {
-        result = true;
-        for (var key in query) {
-          if (query.hasOwnProperty(key)) {
-            result = result && (hash[key] === query[key]);
-          }
-        }
-        return result;
-      };
+      var self = this,
+          db = this._getDb();
 
-      var cursor, records = [], self = this;
-      var onSuccess = function(event) {
-        if (cursor = event.target.result) {
-          if (match(cursor.value, query)) {
-            records.pushObject(cursor.value);
-          }
-          cursor.continue();
+      var keys = [];
+      for (key in query) {
+        if (query.hasOwnProperty(key)) {
+          keys.push(key);
+        }
+      }
+
+      var emitKeys = keys.map(function(key) {
+        return 'doc.' + key;
+      });
+      var queryKeys = keys.map(function(key) {
+        return query[key];
+      });
+
+      // Very simple map function for a conjunction (AND) of all keys in the query
+      var mapFn = 'function(doc) {' +
+            'if (doc["emberDataType"]) {' +
+              'emit([doc["emberDataType"]' + (emitKeys.length > 0 ? ',' : '') + emitKeys.join(',') + '], null);' +
+            '}' +
+          '}';
+
+      db.query({map: mapFn}, {reduce: false, key: [].concat(type.toString(), queryKeys), include_docs: true}, function(err, response) {
+        if (err) {
+          console.error(err);
         } else {
-          self.didFindQuery(store, type, array, records);
+          if (response.rows) {
+            var data = response.rows.map(function(row) { return row.doc; });
+            self.didFindQuery(store, type, data, array);
+          }
         }
-      };
-
-      this.read(store, type, onSuccess);
-    },
-
-    didFindQuery: function(store, type, array, records) {
-      array.load(records);
+      });
     },
 
     // private
 
-    _getDatabaseName: function() {
-      return this.databaseName || 'ember-application-db';
-    },
-
+    /**
+     * Lazily create a PouchDB instance
+     *
+     * @returns {PouchDB}
+     * @private
+     */
     _getDb: function() {
       if (!this.db) {
-        this.db = new PouchDB(this._getDatabaseName());
+        this.db = new PouchDB(this.databaseName || 'ember-application-db');
       }
       return this.db;
     }

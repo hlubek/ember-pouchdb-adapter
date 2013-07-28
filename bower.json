@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "dependencies": {
     "ember": "~1.0.0-rc.6",
-    "ember-data-shim": "~0.0.13"
+    "ember-data-shim": "~0.0.13",
+    "node-uuid": "*"
   },
   "ignore": [
     "**/.*",

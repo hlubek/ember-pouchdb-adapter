@@ -71,9 +71,21 @@ asyncTest('create and find', function() {
 
     list = List.find('l1');
     list.one('didLoad', function() {
-      ok(true, 'Record loaded');
+      equal(list.get('id'), 'l1', 'Record loaded');
       start();
     });
+  });
+
+  transaction.commit();
+});
+
+asyncTest('create with generated id', function() {
+  var transaction = store.transaction();
+  var record = transaction.createRecord(List, { name: 'one' });
+
+  record.one('didCreate', function() {
+    ok(record.get('id').length === 36, 'UUID assigned');
+    start();
   });
 
   transaction.commit();
@@ -185,6 +197,38 @@ asyncTest('create and findAll', function() {
   });
 
   transaction.commit();
+});
+
+asyncTest('create and delete', function() {
+  var record = List.createRecord({ id: 'l1', name: 'one', b: true });
+
+  record.one('didCreate', function() {
+    record.deleteRecord();
+    record.get('transaction').commit();
+
+    record.one('didDelete', function() {
+      ok(true, 'Record was updated');
+      start();
+    });
+  });
+
+  record.get('transaction').commit();
+});
+
+asyncTest('create and findQuery', function() {
+  List.createRecord({ id: 'l1', name: 'one', b: true });
+  var record = List.createRecord({ id: 'l2', name: 'two', b: false });
+
+  record.one('didCreate', function() {
+    lists = List.find({name: 'two'});
+
+    lists.then(function() {
+      equal(lists.get('length'), 1, 'Record loaded');
+      start();
+    });
+  });
+
+  record.get('transaction').commit();
 });
 
 /*
