@@ -65,10 +65,6 @@
       return uuid();
     },
 
-    toJSON: function(record, options) {
-      return get(this, 'serializer').toJSON(record, options);
-    },
-
     /**
      Main hook for saving a newly created record.
 
@@ -111,18 +107,6 @@
       });
     },
 
-    /**
-     Main hook for deleting an existing record. Note that
-     deletions can also trigger changes in relationships with
-     other records.
-
-     If those records are unloaded, those changes happen
-     through the update*Relationship family of methods.
-
-     @param {DS.Store} store
-     @param {Class} type
-     @param {DS.Model} record
-     */
     deleteRecord: function(store, type, record) {
       var self = this;
 
@@ -138,17 +122,6 @@
       });
     },
 
-    /**
-     The main hook for finding a single record. The `findMany`
-     hook defaults to delegating to this method.
-
-     Since the IndexedDB database is local, we don't need to
-     implement a specific `findMany` method.
-
-     @param {DS.Store} store
-     @param {Class} type
-     @param {String|Number} id
-     */
     find: function(store, type, id) {
       var self = this,
           db = this._getDb();
