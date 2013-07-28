@@ -1,72 +1,36 @@
 (function() {
   var get = Ember.get, set = Ember.set;
 
-  DS.PouchDBSerializer = DS.JSONSerializer.extend({
+  DS.PouchDBSerializer = DS.FixtureSerializer.extend({
+
     /**
-     * Get the document revision that is stored on the record for serialization
+     * Override to get the document revision that is stored on the record for PouchDB updates
      */
     addAttributes: function(data, record) {
       this._super(data, record);
       data._rev = get(record, '_rev');
     },
 
-    addBelongsTo: function(hash, record, key, relationship) {
-      hash[relationship.key] = get(get(record, key), 'id');
+    addBelongsTo: function(data, record, key, relationship) {
+      data[relationship.key] = get(get(record, key), 'id');
     },
 
-    addHasMany: function(hash, record, key, relationship) {
-      var ids = get(record, key).map(function(child) {
-        return get(child, 'id');
+    addHasMany: function(data, record, key, relationship) {
+      var ids = [];
+      get(record, relationship.key).forEach(function(item) {
+        ids.push(get(item, 'id'));
       });
 
-      var a = [];
-      ids.forEach(function(id) {
-        a.push(id);
-      });
-      hash[relationship.key] = a;
+      data[relationship.key] = ids;
     },
 
-    addId: function(hash, type, id) {
-      hash._id = type.toString() + '-' + id;
-      hash.id = id;
+    addId: function(data, key, id) {
+      data[key] = id;
+      data._id = id;
     },
 
-    extractId: function(type, hash) {
-      // newly created records should not try to materialize
-      if (hash && hash.id) {
-        return hash.id;
-      }
-    },
-
-    extractMany: function(loader, documents, type, records) {
-      var objects = documents, references = [];
-      if (records) { records = records.toArray(); }
-
-      for (var i = 0; i < objects.length; i++) {
-        if (records) { loader.updateId(records[i], objects[i]); }
-        var reference = this.extractRecordRepresentation(loader, type, objects[i]);
-        references.push(reference);
-      }
-
-      loader.populateArray(references);
-    },
-
-    toJSON: function(record, options) {
-      options = options || {};
-
-      var hash = {}, id;
-
-      if (options.includeId) {
-        if (id = get(record, 'id')) {
-          this.addId(hash, record.constructor, id);
-        }
-      }
-
-      this.addAttributes(hash, record);
-
-      this.addRelationships(hash, record);
-
-      return hash;
+    addType: function(data, type) {
+      data['emberDataType'] = type.toString();
     },
 
     /**
@@ -101,18 +65,6 @@
       return uuid();
     },
 
-    /**
-     Takes a (record) or (a modelType and an id)
-     and build the serialized id [type, id] to be stored in the db.
-     **/
-    dbId: function(obj, id) {
-      if (obj instanceof DS.Model) {
-        return [obj.constructor.toString(), get(obj, 'id')]
-      } else {
-        return [obj.toString(), id];
-      }
-    },
-
     toJSON: function(record, options) {
       return get(this, 'serializer').toJSON(record, options);
     },
@@ -125,10 +77,7 @@
      @param {DS.Model} records
      */
     createRecord: function(store, type, record) {
-      var hash = this.toJSON(record, { includeId: true });
-
-      // Store the type in the value so that we can index it on read
-      hash.recordType = type.toString();
+      var hash = this.serialize(record, { includeId: true, includeType: true });
 
       this._getDb().put(hash, function(err, response) {
         if (!err) {
@@ -148,10 +97,10 @@
      @param {DS.Model} record
      */
     updateRecord: function(store, type, record) {
-      var hash = this.toJSON(record, { includeId: true });
+      var hash = this.serialize(record, { includeId: true, includeType: true });
 
       // Store the type in the value so that we can index it on read
-      hash.recordType = type.toString();
+      hash['emberDataType'] = type.toString();
 
       this._getDb().put(hash, function(err, response) {
         if (!err) {
@@ -197,28 +146,26 @@
           db = this._getDb();
 
       db.query({map: function(doc) {
-        if (doc.recordType) {
-          emit(doc.recordType, null);
+        if (doc['emberDataType']) {
+          emit(doc['emberDataType'], null);
         }
       }}, {reduce: false, key: type.toString(), include_docs: true}, function(err, response) {
         if (err) {
           console.error(err);
         } else {
           if (response.rows && response.rows[0]) {
-            store.load(type, response.rows[0].doc);
+            self.didFindRecord(store, type, response.rows[0].doc, id)
           }
         }
       });
     },
 
     findMany: function(store, type, ids) {
-      var db = this._getDb(),
+      var self = this,
+          db = this._getDb(),
           records = Ember.A();
 
-      var documentIds = ids.map(function(id) {
-        return type.toString() + '-' + id;
-      });
-      db.allDocs({keys: documentIds, include_docs: true}, function(err, response) {
+      db.allDocs({keys: ids, include_docs: true}, function(err, response) {
         if (err) {
           console.error(err);
         } else {
@@ -226,7 +173,7 @@
             response.rows.forEach(function(row) {
               records.pushObject(row.doc);
             });
-            store.loadMany(type, records);
+            self.didFindMany(store, type, records);
           }
         }
       });
@@ -289,60 +236,6 @@
 
     didFindQuery: function(store, type, array, records) {
       array.load(records);
-    },
-
-    /**
-     *
-     * @param {IDBObjectStore} dbStore
-     * @param {string} type
-     * @returns {*}
-     */
-    buildRequest: function(dbStore, type) {
-      // Index on modelType for faster querying
-      var index = dbStore.index('_type');
-      var IDBKeyRange = window.IDBKeyRange || window.webkitIDBKeyRange;
-      var onlyOfType = IDBKeyRange.only(type.toString());
-
-      return request = index.openCursor(onlyOfType);
-    },
-
-    /**
-     @private
-
-     Attempt to commit a change to a single Ember Data
-     record in the context of an IndexedDB transaction.
-     This method delegates most of its work to
-     `withDbTransaction`.
-
-     It registers a `success` callback on the `IDBRequest`
-     returned by `withDbTransaction`, which notifies the
-     Ember Data store that the record was successfully
-     saved.
-
-     @param {DS.Store} store the store to notify that the
-     record was successfully saved to IndexedDB.
-     @param {DS.Model} record the record to save. This
-     parameter is passed through to the store's
-     `didSaveRecord` method if the IndexedDB request
-     succeeds.
-     @param {Function} callback a function that actually
-     makes a request to the IndexedDB database. It is
-     invoked with an `IDBObjectStore`, and is expected
-     to return an `IDBRequest`.
-     */
-    attemptDbTransaction: function(store, record, callback) {
-      var self = this;
-      this.getDb(store).then(function(db) {
-        var dbName = self._getDatabaseName(),
-            dbTransaction = db.transaction([dbName], 'readwrite'),
-            dbStore = dbTransaction.objectStore(dbName);
-
-        callback.call(self, dbStore);
-          // Use the transaction complete event instead of request success
-        dbTransaction.oncomplete = function() {
-          store.didSaveRecord(record);
-        };
-      });
     },
 
     // private
