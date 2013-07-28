@@ -1,7 +1,15 @@
 (function() {
   var get = Ember.get, set = Ember.set;
 
-  DS.PouchDBSerializer = DS.JSONSerializer.create({
+  DS.PouchDBSerializer = DS.JSONSerializer.extend({
+    /**
+     * Get the document revision that is stored on the record for serialization
+     */
+    addAttributes: function(data, record) {
+      this._super(data, record);
+      data._rev = get(record, '_rev');
+    },
+
     addBelongsTo: function(hash, record, key, relationship) {
       hash[relationship.key] = get(get(record, key), 'id');
     },
@@ -30,6 +38,19 @@
       }
     },
 
+    extractMany: function(loader, documents, type, records) {
+      var objects = documents, references = [];
+      if (records) { records = records.toArray(); }
+
+      for (var i = 0; i < objects.length; i++) {
+        if (records) { loader.updateId(records[i], objects[i]); }
+        var reference = this.extractRecordRepresentation(loader, type, objects[i]);
+        references.push(reference);
+      }
+
+      loader.populateArray(references);
+    },
+
     toJSON: function(record, options) {
       options = options || {};
 
@@ -46,6 +67,17 @@
       this.addRelationships(hash, record);
 
       return hash;
+    },
+
+    /**
+     * Add the document revision to the record on materialization
+     *
+     * TODO Check if this is a good idea or a special Document mixin should be used
+     * that defines an attribute that will do just this.
+     */
+    materializeAttributes: function(record, serialized, prematerialized) {
+      this._super(record, serialized, prematerialized);
+      set(record, '_rev', serialized._rev);
     }
   });
 
@@ -100,6 +132,7 @@
 
       this._getDb().put(hash, function(err, response) {
         if (!err) {
+          set(record, '_rev', response.rev);
           store.didSaveRecord(record);
         } else {
           console.error(err);
@@ -116,13 +149,16 @@
      */
     updateRecord: function(store, type, record) {
       var hash = this.toJSON(record, { includeId: true });
-      var self = this;
 
       // Store the type in the value so that we can index it on read
-      hash._type = type.toString();
+      hash.recordType = type.toString();
 
-      this.attemptDbTransaction(store, record, function(dbStore) {
-        return dbStore.put(hash);
+      this._getDb().put(hash, function(err, response) {
+        if (!err) {
+          store.didSaveRecord(record);
+        } else {
+          console.error(err);
+        }
       });
     },
 
@@ -157,8 +193,8 @@
      @param {String|Number} id
      */
     find: function(store, type, id) {
-      var self = this;
-      var db = this._getDb();
+      var self = this,
+          db = this._getDb();
 
       db.query({map: function(doc) {
         if (doc.recordType) {
@@ -169,58 +205,50 @@
           console.error(err);
         } else {
           if (response.rows && response.rows[0]) {
-            self.didFindRecord(store, type, response.rows[0].doc, id);
+            store.load(type, response.rows[0].doc);
           }
         }
       });
     },
 
-    didFindRecord: function(store, type, hash, id) {
-      if (hash) {
-        store.load(type, hash);
-      }
-    },
-
     findMany: function(store, type, ids) {
-      var self = this;
       var db = this._getDb(),
           records = Ember.A();
 
-      db.allDocs({keys: ids.map(function(id) { return type.toString() + '-' + id; }), include_docs: true}, function(err, response) {
+      var documentIds = ids.map(function(id) {
+        return type.toString() + '-' + id;
+      });
+      db.allDocs({keys: documentIds, include_docs: true}, function(err, response) {
         if (err) {
           console.error(err);
         } else {
           if (response.rows) {
             response.rows.forEach(function(row) {
-              records.pushObject(row);
+              records.pushObject(row.doc);
             });
-            self.didFindMany(store, type, records);
+            store.loadMany(type, records);
           }
         }
       });
     },
 
-    didFindMany: function(store, type, records) {
-      store.loadMany(type, records);
-    },
+    findAll: function(store, type, sinceToken) {
+      var self = this,
+          db = this._getDb(),
+          data = [];
 
-    findAll: function(store, type) {
-      var cursor, records = [], self = this;
-
-      var onSuccess = function(event) {
-        if (cursor = event.target.result) {
-          records.pushObject(cursor.value);
-          cursor.continue();
+      db.allDocs({include_docs: true}, function(err, response) {
+        if (err) {
+          console.error(err);
         } else {
-          self.didFindAll(store, type, records);
+          if (response.rows) {
+            response.rows.forEach(function(row) {
+              data.push(row.doc);
+            });
+            self.didFindAll(store, type, data);
+          }
         }
-      };
-
-      this.read(store, type, onSuccess);
-    },
-
-    didFindAll: function(store, type, records) {
-      store.loadMany(type, records);
+      });
     },
 
     /**

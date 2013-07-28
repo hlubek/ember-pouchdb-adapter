@@ -62,11 +62,12 @@ test('existence', function() {
 
 asyncTest('create and find', function() {
   var transaction = store.transaction();
-  var record = transaction.createRecord(List, { id: 'l1', name: 'one', b: true, items: [] });
+  var record = transaction.createRecord(List, { id: 'l1', name: 'one', b: true });
 
   record.one('didCreate', function() {
-      // FIXME This is a hack to reset the internal id map for loaded models
-    store.typeMaps = {};
+    store.destroy();
+    store = DS.Store.create({adapter: adapter});
+    DS.set('defaultStore', store);
 
     list = List.find('l1');
     list.one('didLoad', function() {
@@ -78,14 +79,15 @@ asyncTest('create and find', function() {
   transaction.commit();
 });
 
-asyncTest('create and find with many', function() {
+asyncTest('create and find with hasMany', function() {
   var transaction = store.transaction();
   var list = transaction.createRecord(List, { id: 'l1', name: 'one', b: true });
   transaction.createRecord(Item, { id: 'i1', name: 'one', list: list });
 
   list.one('didCreate', function() {
-      // FIXME This is a hack to reset the internal id map for loaded models
-    store.typeMaps = {};
+    store.destroy();
+    store = DS.Store.create({adapter: adapter});
+    DS.set('defaultStore', store);
 
     list = List.find('l1');
     list.one('didLoad', function() {
@@ -98,12 +100,94 @@ asyncTest('create and find with many', function() {
   transaction.commit();
 });
 
-/*
-test('findMany', function() {
-  lists = store.findMany(List, ['l1', 'l3']);
-  clock.tick(1);
-  assertStoredLists();
+asyncTest('create and findMany', function() {
+  var transaction = store.transaction();
+  transaction.createRecord(List, { id: 'l1', name: 'one', b: true });
+  transaction.createRecord(List, { id: 'l2', name: 'two', b: true });
+  var record = transaction.createRecord(List, { id: 'l3', name: 'three', b: true });
+
+  record.one('didCreate', function() {
+    store.destroy();
+    store = DS.Store.create({adapter: adapter});
+    DS.set('defaultStore', store);
+
+    lists = store.findMany(List, ['l1', 'l3']);
+    lists.one('didLoad', function() {
+      deepEqual(lists.map(function(list) { return list.get('id'); }), ['l1', 'l3'], 'records with ids should be loaded');
+      start();
+    });
+
+  });
+
+  transaction.commit();
 });
+
+asyncTest('create and update', function() {
+  var transaction = store.transaction();
+  var record = transaction.createRecord(List, { id: 'l1', name: 'one', b: true });
+
+  record.one('didCreate', function() {
+    record.set('name', 'one and a half');
+
+    store.save();
+
+    record.one('didUpdate', function() {
+      ok(true, 'Record was updated');
+      start();
+    });
+  });
+
+  transaction.commit();
+});
+
+asyncTest('create find and update', function() {
+  var transaction = store.transaction();
+  var record = transaction.createRecord(List, { id: 'l1', name: 'one', b: true });
+
+  record.one('didCreate', function() {
+    store.destroy();
+    store = DS.Store.create({adapter: adapter});
+    DS.set('defaultStore', store);
+
+    list = List.find('l1');
+    list.one('didLoad', function() {
+      list.set('name', 'one and a half');
+
+      store.save();
+
+      list.one('didUpdate', function() {
+        ok(true, 'Record was updated');
+        start();
+      });
+    });
+  });
+
+  transaction.commit();
+});
+
+asyncTest('create and findAll', function() {
+  var transaction = store.transaction();
+  transaction.createRecord(List, { id: 'l1', name: 'one', b: true });
+  var record = transaction.createRecord(List, { id: 'l2', name: 'two', b: false });
+
+  record.one('didCreate', function() {
+    store.destroy();
+    store = DS.Store.create({adapter: adapter});
+    DS.set('defaultStore', store);
+
+    lists = List.find();
+    lists.then(function() {
+      setTimeout(function() {
+        deepEqual(lists.map(function(list) { return list.get('id'); }), ['l1', 'l2'], 'Records were loaded');
+        start();
+      }, 10);
+    });
+  });
+
+  transaction.commit();
+});
+
+/*
 
 test('findQuery', function() {
   lists = store.findQuery(List, {name: /one|two/});
