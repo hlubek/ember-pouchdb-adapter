@@ -62,6 +62,7 @@ test('existence', function() {
 
 asyncTest('create and find', function() {
   var transaction = store.transaction();
+  transaction.createRecord(List, { id: 'l2', name: 'two', b: true });
   var record = transaction.createRecord(List, { id: 'l1', name: 'one', b: true });
 
   record.one('didCreate', function() {
@@ -71,7 +72,7 @@ asyncTest('create and find', function() {
 
     list = List.find('l1');
     list.one('didLoad', function() {
-      equal(list.get('id'), 'l1', 'Record loaded');
+      equal(list.get('name'), 'one', 'Record loaded');
       start();
     });
   });
@@ -203,6 +204,7 @@ asyncTest('create and multiple update', function() {
 
 asyncTest('create and findAll', function() {
   var transaction = store.transaction();
+  transaction.createRecord(Item, { id: 'i1', name: 'one' });
   transaction.createRecord(List, { id: 'l1', name: 'one', b: true });
   var record = transaction.createRecord(List, { id: 'l2', name: 'two', b: false });
 

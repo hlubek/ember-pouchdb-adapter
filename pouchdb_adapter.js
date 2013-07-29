@@ -127,28 +127,13 @@
     },
 
     find: function(store, type, id) {
-      var self = this,
-          db = this._getDb();
-
-      db.query({map: function(doc) {
-        if (doc['emberDataType']) {
-          emit(doc['emberDataType'], null);
-        }
-      }}, {reduce: false, key: type.toString(), include_docs: true}, function(err, response) {
-        if (err) {
-          console.error(err);
-        } else {
-          if (response.rows && response.rows[0]) {
-            self.didFindRecord(store, type, response.rows[0].doc, id)
-          }
-        }
-      });
+      this.findMany(store, type, [id]);
     },
 
     findMany: function(store, type, ids) {
       var self = this,
           db = this._getDb(),
-          records = Ember.A();
+          data = [];
 
       db.allDocs({keys: ids, include_docs: true}, function(err, response) {
         if (err) {
@@ -156,9 +141,9 @@
         } else {
           if (response.rows) {
             response.rows.forEach(function(row) {
-              records.pushObject(row.doc);
+              data.push(row.doc);
             });
-            self.didFindMany(store, type, records);
+            self.didFindMany(store, type, data);
           }
         }
       });
@@ -169,7 +154,11 @@
           db = this._getDb(),
           data = [];
 
-      db.allDocs({include_docs: true}, function(err, response) {
+      db.query({map: function(doc) {
+        if (doc['emberDataType']) {
+          emit(doc['emberDataType'], null);
+        }
+      }}, {reduce: false, key: type.toString(), include_docs: true}, function(err, response) {
         if (err) {
           console.error(err);
         } else {
