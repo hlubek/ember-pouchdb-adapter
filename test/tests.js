@@ -177,6 +177,30 @@ asyncTest('create find and update', function() {
   transaction.commit();
 });
 
+asyncTest('create and multiple update', function() {
+  var transaction = store.transaction();
+  var record = transaction.createRecord(List, { id: 'l1', name: 'one', b: true });
+
+  record.one('didCreate', function() {
+    record.set('name', 'one and a half');
+
+    store.save();
+
+    record.one('didUpdate', function() {
+      record.set('name', 'two');
+
+      store.save();
+
+      record.one('didUpdate', function() {
+        ok(true, 'Record was updated');
+        start();
+      });
+    });
+  });
+
+  transaction.commit();
+});
+
 asyncTest('create and findAll', function() {
   var transaction = store.transaction();
   transaction.createRecord(List, { id: 'l1', name: 'one', b: true });

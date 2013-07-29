@@ -73,12 +73,13 @@
      @param {DS.Model} records
      */
     createRecord: function(store, type, record) {
-      var hash = this.serialize(record, { includeId: true, includeType: true });
+      var self = this,
+          hash = this.serialize(record, { includeId: true, includeType: true });
 
       this._getDb().put(hash, function(err, response) {
         if (!err) {
           set(record, '_rev', response.rev);
-          store.didSaveRecord(record);
+          self.didCreateRecord(store, type, record);
         } else {
           console.error(err);
         }
@@ -93,14 +94,16 @@
      @param {DS.Model} record
      */
     updateRecord: function(store, type, record) {
-      var hash = this.serialize(record, { includeId: true, includeType: true });
+      var self = this,
+          hash = this.serialize(record, { includeId: true, includeType: true });
 
       // Store the type in the value so that we can index it on read
       hash['emberDataType'] = type.toString();
 
       this._getDb().put(hash, function(err, response) {
         if (!err) {
-          store.didSaveRecord(record);
+          set(record, '_rev', response.rev);
+          self.didUpdateRecord(store, type, record);
         } else {
           console.error(err);
         }
@@ -117,6 +120,7 @@
         if (err) {
           console.error(err);
         } else {
+          set(record, '_rev', response.rev);
           self.didDeleteRecord(store, type, record);
         }
       });
