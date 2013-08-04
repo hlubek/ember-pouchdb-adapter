@@ -54,6 +54,18 @@
         }
       }
       return value;
+    },
+
+    /**
+     * Correctly deserialize array values to Ember arrays for easier usage
+     */
+    deserializeValue: function(value, attributeType) {
+      if (attributeType === 'array') {
+        if (value instanceof Array) {
+          return Ember.A(value);
+        }
+      }
+      return value;
     }
   });
 
