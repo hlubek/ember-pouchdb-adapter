@@ -14,7 +14,8 @@ module('DS.PouchDBAdapter', {
 
     List = DS.Model.extend({
       name: DS.attr('string'),
-      b: DS.attr('boolean')
+      b: DS.attr('boolean'),
+      tags: DS.attr('array')
     });
 
     List.toString = function() {

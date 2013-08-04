@@ -42,6 +42,18 @@
     materializeAttributes: function(record, serialized, prematerialized) {
       this._super(record, serialized, prematerialized);
       set(record, '_rev', serialized._rev);
+    },
+
+    /**
+     * Work around the DOMException 25 problem with Ember extended native array
+     */
+    serializeValue: function(value, attributeType) {
+      if (attributeType === 'array') {
+        if (value && value.concat) {
+          value = value.concat([]);
+        }
+      }
+      return value;
     }
   });
 
