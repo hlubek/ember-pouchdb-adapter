@@ -1,71 +1,17 @@
 (function() {
   var get = Ember.get, set = Ember.set;
 
-  DS.PouchDBSerializer = DS.FixtureSerializer.extend({
-
-    /**
-     * Override to get the document revision that is stored on the record for PouchDB updates
-     */
-    addAttributes: function(data, record) {
-      this._super(data, record);
-      data._rev = get(record, '_rev');
-    },
-
-    addBelongsTo: function(data, record, key, relationship) {
-      data[relationship.key] = get(get(record, key), 'id');
-    },
-
-    addHasMany: function(data, record, key, relationship) {
-      var ids = [];
-      get(record, relationship.key).forEach(function(item) {
-        ids.push(get(item, 'id'));
-      });
-
-      data[relationship.key] = ids;
-    },
-
-    addId: function(data, key, id) {
-      data[key] = id;
-      data._id = id;
-    },
-
-    addType: function(data, type) {
-      data['emberDataType'] = type.toString();
-    },
-
-    /**
-     * Add the document revision to the record on materialization
-     *
-     * TODO Check if this is a good idea or a special Document mixin should be used
-     * that defines an attribute that will do just this.
-     */
-    materializeAttributes: function(record, serialized, prematerialized) {
-      this._super(record, serialized, prematerialized);
-      set(record, '_rev', serialized._rev);
-    },
-
-    /**
-     * Work around the DOMException 25 problem with Ember extended native array
-     */
-    serializeValue: function(value, attributeType) {
-      if (attributeType === 'array') {
-        if (value && value.concat) {
-          value = value.concat([]);
-        }
+  DS.PouchDBSerializer = DS.JSONSerializer.extend({
+    primaryKey: '_id',
+    normalize: function(type, hash) {
+      this._super.apply(this, arguments);
+      if (hash._id) {
+        hash.id = hash._id;
       }
-      return value;
+      return hash;
     },
-
-    /**
-     * Correctly deserialize array values to Ember arrays for easier usage
-     */
-    deserializeValue: function(value, attributeType) {
-      if (attributeType === 'array') {
-        if (value instanceof Array) {
-          return Ember.A(value);
-        }
-      }
-      return value;
+    serialize: function(record, options) {
+      return this._super.apply(this, arguments);
     }
   });
 
@@ -74,7 +20,7 @@
    *
    */
   DS.PouchDBAdapter = DS.Adapter.extend({
-    serializer: DS.PouchDBSerializer,
+    defaultSerializer: 'pouchdb',
 
     /**
      Hook used by the store to generate client-side IDs. This simplifies
@@ -98,16 +44,19 @@
      */
     createRecord: function(store, type, record) {
       var self = this,
-          hash = this.serialize(record, { includeId: true, includeType: true });
+          hash = this.serialize(record, { includeId: true, includeType: true }),
+          deferred = Ember.RSVP.defer();
 
       this._getDb().put(hash, function(err, response) {
         if (!err) {
-          set(record, '_rev', response.rev);
-          self.didCreateRecord(store, type, record);
+          set(record, 'data._rev', response.rev);
+          deferred.resolve(record);
         } else {
-          console.error(err);
+          deferred.reject(err);
         }
       });
+
+      return deferred.promise;
     },
 
     /**
@@ -119,64 +68,87 @@
      */
     updateRecord: function(store, type, record) {
       var self = this,
-          hash = this.serialize(record, { includeId: true, includeType: true });
+          hash = this.serialize(record, { includeId: true, includeType: true }),
+          deferred = Ember.RSVP.defer();
 
       // Store the type in the value so that we can index it on read
       hash['emberDataType'] = type.toString();
 
       this._getDb().put(hash, function(err, response) {
-        if (!err) {
-          set(record, '_rev', response.rev);
-          self.didUpdateRecord(store, type, record);
+        if (err) {
+          deferred.reject(err);
         } else {
-          console.error(err);
+          deferred.resolve({id: response.id, _rev: response.rev});
         }
       });
+
+      return deferred.promise;
     },
 
     deleteRecord: function(store, type, record) {
-      var self = this;
+      var self = this,
+          deferred = Ember.RSVP.defer();
 
       this._getDb().remove({
         _id: get(record, 'id'),
-        _rev: get(record, '_rev')
+        _rev: get(record, 'data._rev')
       }, function(err, response) {
         if (err) {
-          console.error(err);
+          deferred.reject(err);
         } else {
-          set(record, '_rev', response.rev);
-          self.didDeleteRecord(store, type, record);
+          deferred.resolve({id: response.id, _rev: response.rev});
         }
       });
+
+      return deferred.promise;
     },
 
     find: function(store, type, id) {
-      this.findMany(store, type, [id]);
+      var self = this,
+          db = this._getDb(),
+          data = [],
+          deferred = Ember.RSVP.defer();
+
+      db.get(id, function(err, doc) {
+        if (err) {
+          deferred.reject(err);
+        } else {
+          deferred.resolve(doc);
+        }
+      });
+
+      return deferred.promise;
     },
 
     findMany: function(store, type, ids) {
       var self = this,
           db = this._getDb(),
-          data = [];
+          data = [],
+          deferred = Ember.RSVP.defer();
 
       db.allDocs({keys: ids, include_docs: true}, function(err, response) {
         if (err) {
-          console.error(err);
+          deferred.reject(err);
         } else {
           if (response.rows) {
             response.rows.forEach(function(row) {
-              data.push(row.doc);
+              if (!row.error) {
+                data.push(row.doc);
+              }
             });
-            self.didFindMany(store, type, data);
+            deferred.resolve(data);
           }
         }
       });
+
+      return deferred.promise;
     },
 
     findAll: function(store, type, sinceToken) {
       var self = this,
           db = this._getDb(),
-          data = [];
+          data = [],
+          deferred = Ember.RSVP.defer();
 
       db.query({map: function(doc) {
         if (doc['emberDataType']) {
@@ -194,11 +166,14 @@
           }
         }
       });
+
+      return deferred.promise;
     },
 
     findQuery: function(store, type, query, array) {
       var self = this,
-          db = this._getDb();
+          db = this._getDb(),
+          deferred = Ember.RSVP.defer();
 
       var keys = [];
       for (key in query) {
@@ -223,14 +198,16 @@
 
       db.query({map: mapFn}, {reduce: false, key: [].concat(type.toString(), queryKeys), include_docs: true}, function(err, response) {
         if (err) {
-          console.error(err);
+          deferred.reject(err);
         } else {
           if (response.rows) {
             var data = response.rows.map(function(row) { return row.doc; });
-            self.didFindQuery(store, type, data, array);
+            deferred.resolve(data);
           }
         }
       });
+
+      return deferred.promise;
     },
 
     // private
@@ -249,4 +226,15 @@
     }
 
   });
+
+  Ember.onLoad('Ember.Application', function(Application) {
+    Application.initializer({
+      name: 'pouchdb',
+      initialize: function(container, application) {
+        application.register('serializer:pouchdb', DS.PouchDBSerializer);
+        application.register('adapter:pouchdb', DS.PouchDBAdapter);
+      }
+    });
+  });
+
 })();
